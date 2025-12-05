@@ -31,6 +31,31 @@ import {
 const MCP_SERVER_URL = config.mcpServerUrl;
 
 /**
+ * Handle GET requests (Health Check)
+ */
+export async function GET(request: NextRequest) {
+  return Response.json({
+    status: "active",
+    service: "MCP GPT Proxy",
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
+ * Handle OPTIONS requests (CORS)
+ */
+export async function OPTIONS(request: NextRequest) {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    },
+  });
+}
+
+/**
  * Handle MCP POST requests
  */
 export async function POST(request: NextRequest) {
@@ -79,12 +104,19 @@ export async function POST(request: NextRequest) {
 
   // Forward request to upstream MCP server
   try {
+    // Construct robust headers for upstream
+    const headers = new Headers();
+    headers.set("Content-Type", "application/json");
+    // Forward Auth
+    const auth = request.headers.get("Authorization");
+    if (auth) headers.set("Authorization", auth);
+    // Forward Accept
+    const accept = request.headers.get("Accept");
+    if (accept) headers.set("Accept", accept);
+
     const response = await fetch(MCP_SERVER_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": request.headers.get("Content-Type") || "application/json",
-        Authorization: request.headers.get("Authorization") || "",
-      },
+      headers: headers,
       body: JSON.stringify(body),
     });
 
@@ -108,7 +140,21 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return Response.json(data);
+    // Construct robust headers for downstream (client)
+    // This ensures 401 challenges are passed back!
+    const responseHeaders = new Headers();
+    responseHeaders.set("Content-Type", "application/json");
+
+    const wwwAuth = response.headers.get("WWW-Authenticate");
+    if (wwwAuth) {
+      responseHeaders.set("WWW-Authenticate", wwwAuth);
+    }
+
+    return new Response(JSON.stringify(data), {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders,
+    });
   } catch (error) {
     console.error("[MCP Proxy] Failed to forward request:", error);
 
